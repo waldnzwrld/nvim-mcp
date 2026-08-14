@@ -92,17 +92,12 @@ end
 return 'error: direction must be back, forward, or list'
 `
 
-const luaOpenAt = luaFindBuf + `
+const luaOpenAt = luaOpenHelpers + `
 local fname, line, col = ...
 col = col or 1
-local b = find_buf(fname)
-if b ~= -1 then
-  vim.cmd('buffer ' .. b)
-else
-  vim.cmd('edit ' .. vim.fn.fnameescape(fname))
-end
-vim.api.nvim_win_set_cursor(0, {line, col - 1})
-vim.cmd('normal! zz')
+local win = show_file(fname, find_buf(fname))
+pcall(vim.api.nvim_win_set_cursor, win, {line, col - 1})
+vim.api.nvim_win_call(win, function() vim.cmd('normal! zz') end)
 return string.format('opened %s at %d:%d', fname, line, col)
 `
 

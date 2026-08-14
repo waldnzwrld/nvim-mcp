@@ -23,7 +23,7 @@ import (
 )
 
 // version is stamped into the MCP server implementation info.
-const version = "0.3.1"
+const version = "0.4.0"
 
 // instructions are surfaced to the MCP client (the model) at initialize time.
 // They drive the one-time, in-chat setup prompts. The first tool result of a

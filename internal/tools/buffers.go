@@ -59,19 +59,71 @@ local function find_buf(fname)
 end
 `
 
-// luaFileOpen ports open-in-nvim / nvim-agent-open: show the file in the current
-// window. If it is already loaded, switch to that buffer (avoids E37 on a
-// modified buffer); otherwise edit it fresh, then refresh from disk.
-const luaFileOpen = luaFindBuf + `
-local fname = ...
-local b = find_buf(fname)
-if b ~= -1 then
-  vim.cmd('buffer ' .. b)
-else
-  vim.cmd('edit ' .. vim.fn.fnameescape(fname))
+// luaOpenHelpers extends luaFindBuf with window targeting so a file open never
+// clobbers the chat/terminal pane. A window is a valid target only if its buffer
+// is a real file (buftype "") or scratch (buftype "nofile"); terminals, help,
+// quickfix, prompt and floating windows are skipped. The file is shown in a file
+// pane without stealing focus from the caller (the chat terminal), so it never
+// interrupts the human's typing.
+const luaOpenHelpers = luaFindBuf + `
+local function win_reusable(win)
+  if vim.api.nvim_win_get_config(win).relative ~= '' then return false end -- floating
+  local bt = vim.bo[vim.api.nvim_win_get_buf(win)].buftype
+  return bt == '' or bt == 'nofile'
 end
-pcall(vim.cmd, 'silent! checktime')
-return 'opened ' .. fname
+
+-- pick_win chooses where to show target_buf: a window already showing it, else
+-- the current window if reusable, else any reusable window (real file panes
+-- before scratch). Returns nil when only non-reusable windows (e.g. the chat
+-- terminal) exist, signalling the caller to make a new split.
+local function pick_win(target_buf)
+  local wins = vim.api.nvim_tabpage_list_wins(0)
+  if target_buf and target_buf ~= -1 then
+    for _, w in ipairs(wins) do
+      if win_reusable(w) and vim.api.nvim_win_get_buf(w) == target_buf then return w end
+    end
+  end
+  local cur = vim.api.nvim_get_current_win()
+  if win_reusable(cur) then return cur end
+  local fallback
+  for _, w in ipairs(wins) do
+    if win_reusable(w) then
+      if vim.bo[vim.api.nvim_win_get_buf(w)].buftype == '' then return w end
+      fallback = fallback or w
+    end
+  end
+  return fallback
+end
+
+-- show_file displays fname in a safe window without moving focus, and returns
+-- (window, buffer). b is a preloaded buffer number or -1 to load fresh.
+local function show_file(fname, b)
+  if b == -1 then
+    b = vim.fn.bufadd(vim.fn.resolve(vim.fn.fnamemodify(fname, ':p')))
+    vim.fn.bufload(b)
+    vim.bo[b].buflisted = true
+  end
+  local win = pick_win(b)
+  if win == nil then
+    -- Only non-reusable windows (the chat terminal): split off it and restore
+    -- focus so the terminal is never overwritten and typing is uninterrupted.
+    local orig = vim.api.nvim_get_current_win()
+    vim.cmd('vsplit')
+    win = vim.api.nvim_get_current_win()
+    vim.api.nvim_set_current_win(orig)
+  end
+  vim.api.nvim_win_set_buf(win, b)
+  return win, b
+end
+`
+
+// luaFileOpen ports open-in-nvim / nvim-agent-open: show the file in a file pane
+// (never the chat terminal) and refresh it from disk.
+const luaFileOpen = luaOpenHelpers + `
+local fname = ...
+local win, b = show_file(fname, find_buf(fname))
+vim.api.nvim_buf_call(b, function() pcall(vim.cmd, 'silent! checktime') end)
+return 'opened ' .. fname .. ' in window ' .. win
 `
 
 func registerBuffers(s *mcp.Server, c *nvimc.Client) {
