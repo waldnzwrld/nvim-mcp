@@ -5,6 +5,11 @@ Neovim session.** It attaches to Neovim's msgpack-RPC socket and maps each MCP t
 Lua round-trip, so all the real work (LSP, Treesitter, buffers) runs inside nvim and the
 server stays a tiny static Go binary (~9 MB, a few MB RSS).
 
+> **You can ask Claude to enable optional MCP tools for nvim-mcp** — turning on edit-change
+> highlighting and enhanced buffer opening (auto-opening the files Claude edits into your
+> live session). Both are off until you ask; see
+> [Edit-change highlighting](#edit-change-highlighting) and [auto-open hook](#auto-open-hook).
+
 ## Why Go / this server
 
 - **Single static binary**, zero runtime deps, cross-platform, macOS-native.
