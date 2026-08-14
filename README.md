@@ -136,3 +136,7 @@ go build ./... && go vet ./...
 
 The nvim-side logic lives as Lua string constants next to each tool (ported from the
 original skill scripts). Adding a tool = a `In` struct + a Lua chunk that `return`s a string.
+
+## License
+
+[MIT](LICENSE) — free to use, modify, and redistribute.

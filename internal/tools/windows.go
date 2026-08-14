@@ -94,7 +94,7 @@ return 'error: direction must be back, forward, or list'
 
 const luaOpenAt = luaOpenHelpers + `
 local fname, line, col = ...
-col = col or 1
+if type(col) ~= 'number' then col = 1 end -- omitted col arrives as vim.NIL (truthy userdata)
 local win = show_file(fname, find_buf(fname))
 pcall(vim.api.nvim_win_set_cursor, win, {line, col - 1})
 vim.api.nvim_win_call(win, function() vim.cmd('normal! zz') end)
