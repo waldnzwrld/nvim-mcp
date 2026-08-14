@@ -70,12 +70,16 @@ machine-managed session subtrees under `~/.claude` (`plans/`, `projects/`, `sess
 `CLAUDE.md`, `agents/`, `skills/`, `memory/`, `hooks/`, …) is surfaced and reloaded
 normally. 
 
-On first launch, if it isn't already in your Claude settings, Claude will offer to install
-it (default: yes) and remember your answer. Toggle later by asking — drives
-`vim_surface_hook` (`on`|`off`|`status`); `on` prints the exact command to wire in.
+The hook lives in Claude's `settings.json`, which the server cannot edit — so setup is
+driven from chat: **ask Claude to auto-open your edits in Neovim** and it wires the entry in
+for you (`vim_surface_hook on` prints the exact command; Claude adds it to `settings.json`,
+which takes effect next session). The server also nudges Claude — through its MCP
+instructions and a note on the first tool result — to offer this on its own, but that prompt
+is *best-effort*: the model may not raise it, so if it doesn't come up, just ask. Toggle
+later the same way — `vim_surface_hook` (`on`|`off`|`status`). Your choice is remembered in
+`~/.config/nvim-mcp/config.json`, independent of whether the hook is currently installed.
 
-The hook lives in Claude's `settings.json`, so the server only *offers*; Claude writes it
-(takes effect next session). The entry looks like:
+The entry looks like:
 
 ```json
 "hooks": {
@@ -98,9 +102,12 @@ The hook lives in Claude's `settings.json`, so the server only *offers*; Claude 
 When enabled, lines `vim_edit` changes are highlighted (`DiffAdd`-linked `NvimMcpEdit`) in
 your live buffer; highlights accumulate and clear when you **save** (save = accept).
 
-Off until you decide — no env var. The choice is stored in `~/.config/nvim-mcp/config.json`
-and set through chat: Claude asks on its first unconfigured edit, then respects it. Toggle
-by asking — drives `vim_edit_highlight` (`on`|`off`|`status`).
+Off until you turn it on — there is no env var. The setting is stored in
+`~/.config/nvim-mcp/config.json` and driven from chat: **ask Claude to highlight the lines
+it edits** and it flips it on (`vim_edit_highlight` — `on`|`off`|`status`). The server also
+nudges Claude — via its MCP instructions and a note appended to its first unconfigured edit —
+to raise this with you once, but that prompt is *best-effort*: the model may not act on it,
+so if it never comes up, just ask directly. The choice persists across sessions.
 
 ## Tools
 
