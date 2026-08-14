@@ -6,10 +6,28 @@ import (
 	"strings"
 )
 
-// surfaceHookMarker uniquely identifies the surface-in-nvim PostToolUse hook in
-// a Claude settings file. Matching the script's basename is schema-agnostic: it
-// works whether the entry is written as a bare command or a wrapped invocation.
-const surfaceHookMarker = "surface-in-nvim"
+// surfaceHookMarker uniquely identifies the auto-open PostToolUse hook in a
+// Claude settings file. The hook is the binary invoking itself as `nvim-mcp
+// hook`, so its command string always contains this substring regardless of the
+// absolute path it is installed with (e.g. "/Users/me/go/bin/nvim-mcp hook").
+const surfaceHookMarker = "nvim-mcp hook"
+
+// SurfaceHookCommand returns the command string to place in a Claude Code
+// PostToolUse hook to enable auto-open: the absolute path of this running
+// executable followed by the `hook` subcommand. Using the resolved executable
+// path (not a bare "nvim-mcp") makes the hook work regardless of the caller's
+// PATH. It falls back to a bare "nvim-mcp hook" only if the path can't be
+// resolved.
+func SurfaceHookCommand() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "nvim-mcp hook"
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	return exe + " hook"
+}
 
 // SurfaceHookInstalled reports whether the auto-open PostToolUse hook is present
 // in any of the Claude settings files that could carry it: the user-level files

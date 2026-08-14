@@ -18,11 +18,12 @@ import (
 
 	"github.com/waldnzwrld/nvim-mcp/internal/config"
 	"github.com/waldnzwrld/nvim-mcp/internal/nvimc"
+	"github.com/waldnzwrld/nvim-mcp/internal/surface"
 	"github.com/waldnzwrld/nvim-mcp/internal/tools"
 )
 
 // version is stamped into the MCP server implementation info.
-const version = "0.3.0"
+const version = "0.3.1"
 
 // instructions are surfaced to the MCP client (the model) at initialize time.
 // They drive the one-time, in-chat setup prompts. The first tool result of a
@@ -34,9 +35,18 @@ First-run setup: the first tool result of a session may include a "[nvim-mcp fir
 
 Edit-change highlighting: lines you change with vim_edit can be highlighted in the user's buffer so they can see what you touched; the highlight clears when they save that buffer. If unconfigured (vim_edit_highlight status returns "unset"), ask once whether to enable it, then set vim_edit_highlight (on/off).
 
-Auto-open of edited files: a "surface-in-nvim" PostToolUse hook can open every file you edit (via your Edit/Write tools) into this Neovim session, so the human sees your work in their editor. The MCP server cannot install it — it lives in Claude's settings.json. If it is not installed and the choice is unset (vim_surface_hook status), offer: "Would you like me to automatically open new and edited files in Neovim?" (default: yes). On yes, add the PostToolUse hook to settings.json via the update-config skill and set vim_surface_hook on (it takes effect next session); on no, set vim_surface_hook off. Respect the stored choices afterward; the user can change either anytime by asking.`
+Auto-open of edited files: a bundled "nvim-mcp hook" PostToolUse hook can open every file you edit (via your Edit/Write tools) into this Neovim session, so the human sees your work in their editor. The MCP server cannot install it — it lives in Claude's settings.json. If it is not installed and the choice is unset (vim_surface_hook status), offer: "Would you like me to automatically open new and edited files in Neovim?" (default: yes). On yes, call vim_surface_hook on — it returns the exact command to run — and add that as a PostToolUse hook (matcher "Edit|Write|MultiEdit") to settings.json via the update-config skill (it takes effect next session); on no, set vim_surface_hook off. Respect the stored choices afterward; the user can change either anytime by asking.`
 
 func main() {
+	// `nvim-mcp hook` is the self-contained PostToolUse hook (see internal/surface).
+	// It reads a hook payload on stdin, surfaces the edited file into the live
+	// Neovim session, and always exits 0 so it can never block a tool call. It is
+	// handled before flag parsing so the bare subcommand needs no flags.
+	if len(os.Args) > 1 && os.Args[1] == "hook" {
+		surface.Run(os.Stdin, os.Getenv("NVIM_SOCKET_PATH"))
+		return
+	}
+
 	socket := flag.String("socket", "",
 		"Neovim RPC socket/address override. By default the socket Neovim creates automatically is discovered.")
 	printAddr := flag.Bool("print-address", false, "print the discovered nvim address and exit")

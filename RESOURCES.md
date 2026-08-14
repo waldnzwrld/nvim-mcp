@@ -71,7 +71,7 @@ buffer add/delete/write).
 |---|---|
 | **Go toolchain** (`go build`, `go vet`) | Builds the single static binary; `go install` for distribution. |
 | **Claude Code** | Reference MCP client; registered via `claude mcp add` or [`.mcp.json`](.mcp.json). |
-| `bash` / `python3` / `realpath` | Used by the optional [`hooks/surface-in-nvim.sh`](hooks/surface-in-nvim.sh) PostToolUse hook to add edited files into the live session. |
+| `nvim-mcp hook` | The bundled `PostToolUse` hook subcommand (same binary) that adds edited files into the live session. No external script or interpreter needed. |
 
 ## Prior art & references
 

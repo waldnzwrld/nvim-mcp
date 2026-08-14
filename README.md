@@ -58,17 +58,33 @@ claude mcp add --scope user nvim -- nvim-mcp
 Manage it with `claude mcp list`, `claude mcp get nvim`, `claude mcp remove nvim`, or `/mcp`
 inside a chat.
 
-A project-local [`.mcp.json`](.mcp.json) is also included if you prefer file-based config.
+A project-local [`.mcp.json`](.mcp.json) is available in this repo if you would like to confine this mcp to specific projects.
 
 ### auto-open hook
 
-[`hooks/surface-in-nvim.sh`](hooks/surface-in-nvim.sh) is a `PostToolUse` hook that opens
-every file Claude edits into the live session. On first launch, if it isn't already in your
-Claude settings, Claude will offer to install it (default: yes) and remember your
-answer. Toggle later by asking — drives `vim_surface_hook` (`on`|`off`|`status`).
+`nvim-mcp hook` is a `PostToolUse` hook — the binary invoking itself — that opens every
+file Claude edits into the live session (anywhere on disk, not just the current project).
+It skips temporary/scratch paths — the OS temp dirs (Claude's scratchpad) and the
+machine-managed session subtrees under `~/.claude` (`plans/`, `projects/`, `sessions/`,
+`shell-snapshots/`, …). Your own `~/.claude` config and content (`settings.json`,
+`CLAUDE.md`, `agents/`, `skills/`, `memory/`, `hooks/`, …) is surfaced and reloaded
+normally. 
+
+On first launch, if it isn't already in your Claude settings, Claude will offer to install
+it (default: yes) and remember your answer. Toggle later by asking — drives
+`vim_surface_hook` (`on`|`off`|`status`); `on` prints the exact command to wire in.
 
 The hook lives in Claude's `settings.json`, so the server only *offers*; Claude writes it
-(takes effect next session).
+(takes effect next session). The entry looks like:
+
+```json
+"hooks": {
+  "PostToolUse": [
+    { "matcher": "Edit|Write|MultiEdit",
+      "hooks": [ { "type": "command", "command": "/path/to/nvim-mcp hook" } ] }
+  ]
+}
+```
 
 ## Configuration
 

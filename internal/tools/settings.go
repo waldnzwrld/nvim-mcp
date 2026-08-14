@@ -24,7 +24,7 @@ type editHighlightIn struct {
 }
 
 type surfaceHookIn struct {
-	Action string `json:"action" jsonschema:"one of: on, off, status. Records whether files Claude edits should be auto-opened in Neovim via the surface-in-nvim PostToolUse hook. This only persists the user's choice — installing/removing the hook itself is a settings.json edit the agent performs (e.g. via the update-config skill). status also reports whether the hook is actually present in Claude's settings."`
+	Action string `json:"action" jsonschema:"one of: on, off, status. Records whether files Claude edits should be auto-opened in Neovim via the bundled 'nvim-mcp hook' PostToolUse hook. This only persists the user's choice — installing/removing the hook itself is a settings.json edit the agent performs (e.g. via the update-config skill); 'on' returns the exact command to install. status also reports whether the hook is actually present in Claude's settings."`
 }
 
 // firstRunBanner returns a one-time, human-directed note listing setup choices
@@ -40,7 +40,7 @@ func firstRunBanner() string {
 		items = append(items, "- Edit-change highlighting is unconfigured — ask whether to highlight lines you edit, then set vim_edit_highlight.")
 	}
 	if _, decided := pkgCfg.SurfaceHook(); !decided && !config.SurfaceHookInstalled() {
-		items = append(items, "- Auto-open of edited files is not set up — ask the user: \"Would you like me to automatically open new and edited files in Neovim?\" (default: yes). On yes, install the surface-in-nvim PostToolUse hook via the update-config skill and set vim_surface_hook on; on no, set vim_surface_hook off.")
+		items = append(items, "- Auto-open of edited files is not set up — ask the user: \"Would you like me to automatically open new and edited files in Neovim?\" (default: yes). On yes, call vim_surface_hook on (it returns the exact PostToolUse command to add) and install that hook via the update-config skill; on no, set vim_surface_hook off.")
 	}
 	if len(items) == 0 {
 		return ""
@@ -100,14 +100,14 @@ func registerSettings(s *mcp.Server, c *nvimc.Client, cfg *config.Store) {
 		})
 
 	addText(s, "vim_surface_hook",
-		"Record whether files Claude edits (via its Edit/Write tools) should be auto-opened into this Neovim session by the surface-in-nvim PostToolUse hook. action: on | off | status. This persists the user's choice only; the hook itself lives in Claude's settings.json and is installed/removed by the agent (e.g. via the update-config skill). status reports both the recorded choice and whether the hook is currently present in settings.",
+		"Record whether files Claude edits (via its Edit/Write tools) should be auto-opened into this Neovim session by the bundled 'nvim-mcp hook' PostToolUse hook. action: on | off | status. This persists the user's choice only; the hook itself lives in Claude's settings.json and is installed/removed by the agent (e.g. via the update-config skill). 'on' returns the exact command string to install. status reports both the recorded choice and whether the hook is currently present in settings.",
 		func(_ context.Context, in surfaceHookIn) (string, error) {
 			switch in.Action {
 			case "on":
 				if err := cfg.SetSurfaceHook(true); err != nil {
 					return "", err
 				}
-				return "surface hook: on (ensure the PostToolUse hook is present in settings.json; it takes effect next Claude session)", nil
+				return fmt.Sprintf("surface hook: on. Add a PostToolUse hook (matcher \"Edit|Write|MultiEdit\") running this command to settings.json; it takes effect next Claude session:\n  %s", config.SurfaceHookCommand()), nil
 			case "off":
 				if err := cfg.SetSurfaceHook(false); err != nil {
 					return "", err
