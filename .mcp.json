@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "nvim": {
+      "command": "/Users/waldnzwrld/go/bin/nvim-mcp",
+      "args": []
+    }
+  }
+}
