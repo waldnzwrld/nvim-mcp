@@ -18,6 +18,7 @@ import (
 
 	"github.com/waldnzwrld/nvim-mcp/internal/config"
 	"github.com/waldnzwrld/nvim-mcp/internal/nvimc"
+	"github.com/waldnzwrld/nvim-mcp/internal/setup"
 	"github.com/waldnzwrld/nvim-mcp/internal/surface"
 	"github.com/waldnzwrld/nvim-mcp/internal/tools"
 )
@@ -44,6 +45,14 @@ func main() {
 	// handled before flag parsing so the bare subcommand needs no flags.
 	if len(os.Args) > 1 && os.Args[1] == "hook" {
 		surface.Run(os.Stdin, os.Getenv("NVIM_SOCKET_PATH"))
+		return
+	}
+
+	// `nvim-mcp setup` merges this server's tool names into permissions.allow of
+	// Claude Code's settings.json so the tools run without per-call prompts.
+	// `--dry-run` reports what it would add without writing.
+	if len(os.Args) > 1 && os.Args[1] == "setup" {
+		runSetup(os.Args[2:])
 		return
 	}
 
@@ -111,5 +120,49 @@ func main() {
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
 		fmt.Fprintf(os.Stderr, "nvim-mcp: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+// runSetup handles `nvim-mcp setup [--dry-run]`: it derives the allow-list from
+// the registered tools (prefixed mcp__nvim__) and merges it into settings.json.
+func runSetup(args []string) {
+	dryRun := false
+	for _, a := range args {
+		switch a {
+		case "--dry-run", "-n":
+			dryRun = true
+		default:
+			fmt.Fprintf(os.Stderr, "nvim-mcp setup: unknown argument %q\n", a)
+			os.Exit(2)
+		}
+	}
+
+	want := make([]string, 0)
+	for _, name := range tools.ToolNames() {
+		want = append(want, "mcp__nvim__"+name)
+	}
+
+	path, err := setup.SettingsPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "nvim-mcp setup: %v\n", err)
+		os.Exit(1)
+	}
+
+	added, err := setup.MergeAllow(path, want, dryRun)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "nvim-mcp setup: %v\n", err)
+		os.Exit(1)
+	}
+
+	switch {
+	case len(added) == 0:
+		fmt.Printf("nvim-mcp setup: all %d tools already allowed in %s\n", len(want), path)
+	case dryRun:
+		fmt.Printf("nvim-mcp setup: would add %d entries to %s:\n", len(added), path)
+		for _, e := range added {
+			fmt.Printf("  %s\n", e)
+		}
+	default:
+		fmt.Printf("nvim-mcp setup: added %d entries to %s (takes effect next session)\n", len(added), path)
 	}
 }
