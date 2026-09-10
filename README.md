@@ -95,6 +95,28 @@ The entry looks like:
 }
 ```
 
+## Skip permission prompts
+
+`nvim-mcp setup` adds every `vim_*` tool to `permissions.allow` in Claude Code's
+`settings.json`, so the tools run without a per-call approval prompt.
+
+```sh
+nvim-mcp setup            # merge the allow entries
+nvim-mcp setup --dry-run  # print what would be added, write nothing
+```
+
+- Entries are derived from the server's registered tools, so the list stays in
+  sync as tools change.
+- Idempotent: only missing entries are appended, as one contiguous block; a
+  re-run is a no-op.
+- Edits only the `allow` array; the rest of the file is left unchanged. Writes
+  are atomic (temp file + rename).
+- Target path is `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json`.
+- Takes effect in the next session (Claude reads permissions at startup).
+
+This grants the full surface, including `vim_command` and `vim_exec_lua`, which
+can run shell/Lua. Omit `setup` and approve tools per call if you don't want that.
+
 ## Configuration
 
 | Env var | Default | Meaning |

@@ -30,10 +30,32 @@ func Register(s *mcp.Server, c *nvimc.Client, cfg *config.Store) {
 	registerPrompt(s, c)
 }
 
+// registeredNames records every tool name passed through addText, in
+// registration order. It is the source of truth for ToolNames (used by the
+// `setup` subcommand to derive the settings.json allow-list) so the two can
+// never drift. Populated as a side effect of Register; the serving path fills
+// it once and ignores it.
+var registeredNames []string
+
+// ToolNames runs the full tool registration against a throwaway server and
+// returns every registered tool name. It needs no live Neovim: registration
+// only builds tool definitions, it does not dial the editor.
+func ToolNames() []string {
+	registeredNames = nil
+	c := nvimc.New("")
+	defer c.Close()
+	s := mcp.NewServer(&mcp.Implementation{Name: "nvim-mcp"}, nil)
+	Register(s, c, config.Load())
+	out := make([]string, len(registeredNames))
+	copy(out, registeredNames)
+	return out
+}
+
 // addText registers a tool whose typed input In produces a single string that is
 // returned to the client as text content. Handler errors become MCP tool errors
 // (IsError), so the model can see and self-correct.
 func addText[In any](s *mcp.Server, name, desc string, fn func(context.Context, In) (string, error)) {
+	registeredNames = append(registeredNames, name)
 	mcp.AddTool(s, &mcp.Tool{Name: name, Description: desc},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 			out, err := fn(ctx, in)
