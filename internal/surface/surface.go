@@ -11,8 +11,9 @@
 // Scoping: a file is surfaced if it is a real file on disk AND does not live in
 // a temporary/scratch location. Files anywhere else are surfaced, including
 // outside the current project. Excluded are the OS temp dirs (where Claude's
-// scratchpad lives) and the machine-managed session subtrees under ~/.claude
-// (plans, transcripts, shell snapshots, …). The rest of ~/.claude —
+// scratchpad lives), the machine-managed session subtrees under ~/.claude
+// (plans, transcripts, shell snapshots, …), and pi's sessions directory. The
+// rest of ~/.claude —
 // settings.json, CLAUDE.md, agents/, skills/, memory/, hooks/, … — is
 // user-authored config the human edits and wants reloaded, so it is NOT
 // excluded. Anything skipped can still be opened deliberately with vim_file_open.
@@ -25,6 +26,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/waldnzwrld/nvim-mcp/internal/config"
 	"github.com/waldnzwrld/nvim-mcp/internal/nvimc"
 )
 
@@ -112,8 +114,9 @@ var claudeTransientDirs = []string{
 
 // excluded reports whether abs lives in a temporary/scratch location that should
 // not be auto-opened: any OS temp dir ($TMPDIR / /tmp / /private/tmp /
-// /var/folders — where Claude's scratchpad lives) or one of the transient
-// session subtrees under ~/.claude (see claudeTransientDirs). abs is expected
+// /var/folders — where Claude's scratchpad lives), one of the transient session
+// subtrees under config.ClaudeDir (see claudeTransientDirs), or pi's default
+// session directory under config.PiDir. abs is expected
 // already symlink-resolved; each excluded root is resolved the same way so the
 // comparison holds despite the macOS /tmp → /private/tmp and /var → /private/var
 // symlinks.
@@ -122,11 +125,13 @@ func excluded(abs string) bool {
 	if t := os.TempDir(); t != "" {
 		roots = append(roots, t)
 	}
-	if home, err := os.UserHomeDir(); err == nil {
+	if dir, err := config.ClaudeDir(); err == nil {
 		for _, sub := range claudeTransientDirs {
-			roots = append(roots, filepath.Join(home, ".claude", sub))
+			roots = append(roots, filepath.Join(dir, sub))
 		}
-		roots = append(roots, filepath.Join(home, ".pi", "agent", "sessions"))
+	}
+	if dir, err := config.PiDir(); err == nil {
+		roots = append(roots, filepath.Join(dir, "sessions"))
 	}
 	for _, r := range roots {
 		if resolved, err := filepath.EvalSymlinks(r); err == nil {
