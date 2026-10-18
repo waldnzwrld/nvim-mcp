@@ -62,27 +62,41 @@ func Run(r io.Reader, socketFlag string) {
 		return
 	}
 
-	file := p.ToolInput.FilePath
-	if file == "" {
-		return
-	}
-	// Only surface something backed by a real file on disk — never an
-	// unnamed/nonexistent scratch target.
-	if info, err := os.Stat(file); err != nil || info.IsDir() {
-		return
-	}
+	Open(socketFlag, p.ToolInput.FilePath)
+}
 
-	abs, err := filepath.EvalSymlinks(file)
-	if err != nil {
-		return
+// Open surfaces each file into Neovim under the same rules as Run: real files
+// only, temporary/scratch paths skipped, relative paths resolved against the
+// working directory. Like Run it is best-effort and silent.
+func Open(socketFlag string, files ...string) {
+	var paths []string
+	for _, file := range files {
+		if file == "" {
+			continue
+		}
+		// Only surface something backed by a real file on disk — never an
+		// unnamed/nonexistent scratch target.
+		if info, err := os.Stat(file); err != nil || info.IsDir() {
+			continue
+		}
+		abs, err := filepath.Abs(file)
+		if err != nil {
+			continue
+		}
+		if abs, err = filepath.EvalSymlinks(abs); err != nil || excluded(abs) {
+			continue
+		}
+		paths = append(paths, abs)
 	}
-	if excluded(abs) {
+	if len(paths) == 0 {
 		return
 	}
 
 	c := nvimc.New(socketFlag)
 	defer c.Close()
-	_ = c.Lua(luaSurface, nil, abs) // best-effort: no live nvim, no surface
+	for _, abs := range paths {
+		_ = c.Lua(luaSurface, nil, abs) // best-effort: no live nvim, no surface
+	}
 }
 
 // claudeTransientDirs are the machine-managed subdirectories of ~/.claude that
@@ -112,6 +126,7 @@ func excluded(abs string) bool {
 		for _, sub := range claudeTransientDirs {
 			roots = append(roots, filepath.Join(home, ".claude", sub))
 		}
+		roots = append(roots, filepath.Join(home, ".pi", "agent", "sessions"))
 	}
 	for _, r := range roots {
 		if resolved, err := filepath.EvalSymlinks(r); err == nil {

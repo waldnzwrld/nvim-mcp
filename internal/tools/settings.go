@@ -31,7 +31,8 @@ type surfaceHookIn struct {
 // that have not been made yet, or "" when there is nothing to prompt. It fires
 // at most once per server process (i.e. once per session), appended to the
 // first tool result — the deterministic "on launch" surface for setup prompts.
-func firstRunBanner() string {
+// The auto-open hook item is only raised for Claude Code clients (claude).
+func firstRunBanner(claude bool) string {
 	if pkgCfg == nil || bannerShown.Load() {
 		return ""
 	}
@@ -39,7 +40,7 @@ func firstRunBanner() string {
 	if _, decided := pkgCfg.HighlightEdits(); !decided {
 		items = append(items, "- Edit-change highlighting is unconfigured — ask whether to highlight lines you edit, then set vim_edit_highlight.")
 	}
-	if _, decided := pkgCfg.SurfaceHook(); !decided && !config.SurfaceHookInstalled() {
+	if _, decided := pkgCfg.SurfaceHook(); claude && !decided && !config.SurfaceHookInstalled() {
 		items = append(items, "- Auto-open of edited files is not set up — ask the user: \"Would you like me to automatically open new and edited files in Neovim?\" (default: yes). On yes, call vim_surface_hook on (it returns the exact PostToolUse command to add) and install that hook via the update-config skill; on no, set vim_surface_hook off.")
 	}
 	if len(items) == 0 {

@@ -34,9 +34,11 @@ const instructions = `This server drives a live Neovim session shared with the h
 
 First-run setup: the first tool result of a session may include a "[nvim-mcp first-run setup]" note listing choices the user has not made yet. When you see it, raise those choices with the user before continuing, then record each answer with the tool named in the note.
 
-Edit-change highlighting: lines you change with vim_edit can be highlighted in the user's buffer so they can see what you touched; the highlight clears when they save that buffer. If unconfigured (vim_edit_highlight status returns "unset"), ask once whether to enable it, then set vim_edit_highlight (on/off).
+Edit-change highlighting: lines you change with vim_edit can be highlighted in the user's buffer so they can see what you touched; the highlight clears when they save that buffer. If unconfigured (vim_edit_highlight status returns "unset"), ask once whether to enable it, then set vim_edit_highlight (on/off).`
 
-Auto-open of edited files: a bundled "nvim-mcp hook" PostToolUse hook can open every file you edit (via your Edit/Write tools) into this Neovim session, so the human sees your work in their editor. The MCP server cannot install it — it lives in Claude's settings.json. If it is not installed and the choice is unset (vim_surface_hook status), offer: "Would you like me to automatically open new and edited files in Neovim?" (default: yes). On yes, call vim_surface_hook on — it returns the exact command to run — and add that as a PostToolUse hook (matcher "Edit|Write|MultiEdit") to settings.json via the update-config skill (it takes effect next session); on no, set vim_surface_hook off. Respect the stored choices afterward; the user can change either anytime by asking.`
+// claudeInstructions are appended only for Claude Code clients: the auto-open
+// hook is a Claude Code PostToolUse hook installed into Claude's settings.json.
+const claudeInstructions = `Auto-open of edited files: a bundled "nvim-mcp hook" PostToolUse hook can open every file you edit (via your Edit/Write tools) into this Neovim session, so the human sees your work in their editor. The MCP server cannot install it — it lives in Claude's settings.json. If it is not installed and the choice is unset (vim_surface_hook status), offer: "Would you like me to automatically open new and edited files in Neovim?" (default: yes). On yes, call vim_surface_hook on — it returns the exact command to run — and add that as a PostToolUse hook (matcher "Edit|Write|MultiEdit") to settings.json via the update-config skill (it takes effect next session); on no, set vim_surface_hook off. Respect the stored choices afterward; the user can change either anytime by asking.`
 
 func main() {
 	// `nvim-mcp hook` is the self-contained PostToolUse hook (see internal/surface).
@@ -45,6 +47,13 @@ func main() {
 	// handled before flag parsing so the bare subcommand needs no flags.
 	if len(os.Args) > 1 && os.Args[1] == "hook" {
 		surface.Run(os.Stdin, os.Getenv("NVIM_SOCKET_PATH"))
+		return
+	}
+
+	// `nvim-mcp open <path>...` surfaces files the same way as the hook, for
+	// clients without Claude Code hooks (e.g. a pi extension). Always exits 0.
+	if len(os.Args) > 1 && os.Args[1] == "open" {
+		surface.Open(os.Getenv("NVIM_SOCKET_PATH"), os.Args[2:]...)
 		return
 	}
 
@@ -89,6 +98,7 @@ func main() {
 		UnsubscribeHandler: func(context.Context, *mcp.UnsubscribeRequest) error { return nil },
 	})
 
+	server.AddReceivingMiddleware(claudeInstructionsMiddleware)
 	tools.Register(server, client, cfg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -120,6 +130,20 @@ func main() {
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
 		fmt.Fprintf(os.Stderr, "nvim-mcp: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+// claudeInstructionsMiddleware appends claudeInstructions to the initialize
+// result when the connecting client is Claude Code.
+func claudeInstructionsMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		res, err := next(ctx, method, req)
+		if ir, ok := res.(*mcp.InitializeResult); ok && err == nil {
+			if p, ok := req.GetParams().(*mcp.InitializeParams); ok && tools.ClaudeCode(p) {
+				ir.Instructions += "\n\n" + claudeInstructions
+			}
+		}
+		return res, err
 	}
 }
 

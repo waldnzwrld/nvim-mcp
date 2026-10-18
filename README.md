@@ -95,6 +95,31 @@ The entry looks like:
 }
 ```
 
+### Other clients
+
+The hook setup prompts and auto-open instructions are only sent to Claude Code
+(detected from the MCP `clientInfo.name`). Other clients can surface files with
+`nvim-mcp open <path>...`, which applies the same rules as the hook (real files
+only, temp/session paths skipped, relative paths resolved against the cwd) and
+always exits 0.
+
+For [pi](https://pi.dev), a `tool_result` extension in
+`~/.pi/agent/extensions/` does the same job as the hook:
+
+```ts
+import { resolve } from "node:path";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { isEditToolResult, isWriteToolResult } from "@earendil-works/pi-coding-agent";
+
+export default function (pi: ExtensionAPI) {
+  pi.on("tool_result", async (event, ctx) => {
+    if (event.isError || !(isEditToolResult(event) || isWriteToolResult(event))) return;
+    const path = event.input.path;
+    if (typeof path === "string" && path) await pi.exec("nvim-mcp", ["open", resolve(ctx.cwd, path)]).catch(() => {});
+  });
+}
+```
+
 ## Skip permission prompts
 
 `nvim-mcp setup` adds every `vim_*` tool to `permissions.allow` in Claude Code's
