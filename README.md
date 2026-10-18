@@ -45,23 +45,46 @@ instance among several).
 nvim-mcp --print-address    # show which running Neovim it discovered
 ```
 
-## Register with Claude Code
+## Setup
 
-One command — no hand-editing `~/.claude.json`:
-
-```sh
-claude mcp add --scope user nvim -- "$(go env GOPATH)/bin/nvim-mcp"
-```
-
-`--scope user` registers it for all your projects; drop it to add just the current project
-(the default, `local`). If `$(go env GOPATH)/bin` is on your `PATH`, `nvim-mcp` alone works:
+One command installs nvim-mcp into the harnesses you use:
 
 ```sh
-claude mcp add --scope user nvim -- nvim-mcp
+nvim-mcp setup                       # detect harnesses, pick which to install into
+nvim-mcp setup --harness claude,pi   # skip the prompt
+nvim-mcp setup --dry-run             # print what would change, write nothing
 ```
 
-Manage it with `claude mcp list`, `claude mcp get nvim`, `claude mcp remove nvim`, or `/mcp`
-inside a chat.
+Supported harnesses are Claude Code (`claude`) and [pi](https://pi.dev) (`pi`). A harness is
+detected when its CLI is on `PATH` or its config directory exists. On a terminal, `setup`
+lists them and asks which to install into (Enter = every detected one); without a terminal
+it installs into every detected harness.
+
+| Step | Claude Code | pi |
+|---|---|---|
+| Register the server as `nvim` | `claude mcp add --scope user nvim -- <abs path>` | `pi mcp add nvim -- <abs path>` |
+| Allow the tools | adds every `mcp__nvim__*` tool to `permissions.allow` in `settings.json` | nothing to do: pi does not ask per tool call |
+| Auto-open edited files | adds the `nvim-mcp hook` `PostToolUse` hook to `settings.json` | writes `extensions/nvim-mcp.ts` |
+
+- Config locations: `$CLAUDE_CONFIG_DIR`, else `~/.claude`; `$PI_CODING_AGENT_DIR`, else
+  `~/.pi/agent`.
+- Idempotent: a step that is already done is skipped, so re-running is safe. Registration is
+  skipped when a server named `nvim` already exists.
+- Settings edits insert only the new entries; the rest of the file is left unchanged. Writes
+  are atomic (temp file + rename).
+- The registered path, hook and extension all use the absolute path of the binary that ran
+  `setup`, so `PATH` does not matter.
+- If a harness's CLI is not on `PATH`, `setup` prints the registration command to run.
+- Auto-open is skipped when you turned it off with `vim_surface_hook off`; otherwise `setup`
+  records it as on.
+- Changes take effect in each harness's next session.
+
+Allowing the tools grants the full surface, including `vim_command` and `vim_exec_lua`,
+which can run shell/Lua. To approve tools per call instead, register by hand
+(`claude mcp add --scope user nvim -- "$(go env GOPATH)/bin/nvim-mcp"`) and skip `setup`.
+
+Manage the Claude registration with `claude mcp list`, `claude mcp get nvim`,
+`claude mcp remove nvim`, or `/mcp` inside a chat; pi's with `pi mcp list` / `/mcp`.
 
 A project-local [`.mcp.json`](.mcp.json) is available in this repo if you would like to confine this mcp to specific projects.
 
@@ -75,14 +98,12 @@ machine-managed session subtrees under `~/.claude` (`plans/`, `projects/`, `sess
 `CLAUDE.md`, `agents/`, `skills/`, `memory/`, `hooks/`, …) is surfaced and reloaded
 normally. 
 
-The hook lives in Claude's `settings.json`, which the server cannot edit — so setup is
-driven from chat: **ask Claude to auto-open your edits in Neovim** and it wires the entry in
-for you (`vim_surface_hook on` prints the exact command; Claude adds it to `settings.json`,
-which takes effect next session). The server also nudges Claude — through its MCP
-instructions and a note on the first tool result — to offer this on its own, but that prompt
-is *best-effort*: the model may not raise it, so if it doesn't come up, just ask. Toggle
-later the same way — `vim_surface_hook` (`on`|`off`|`status`). Your choice is remembered in
-`~/.config/nvim-mcp/config.json`, independent of whether the hook is currently installed.
+`nvim-mcp setup` installs the hook. The server cannot edit `settings.json` itself, so
+when it is missing and no choice is recorded, the server also asks Claude, through its MCP
+instructions and a note on the first tool result, to offer it in chat. That prompt is
+*best-effort*. Toggle later with `vim_surface_hook` (`on`|`off`|`status`). Your choice is
+remembered in `~/.config/nvim-mcp/config.json`, independent of whether the hook is
+currently installed.
 
 The entry looks like:
 
@@ -95,27 +116,18 @@ The entry looks like:
 }
 ```
 
-## Skip permission prompts
+### Other clients
 
-`nvim-mcp setup` adds every `vim_*` tool to `permissions.allow` in Claude Code's
-`settings.json`, so the tools run without a per-call approval prompt.
+The hook setup prompts and auto-open instructions are only sent to Claude Code
+(detected from the MCP `clientInfo.name`). Other clients can surface files with
+`nvim-mcp open <path>...`, which applies the same rules as the hook (real files
+only, temp/session paths skipped, relative paths resolved against the cwd) and
+always exits 0.
 
-```sh
-nvim-mcp setup            # merge the allow entries
-nvim-mcp setup --dry-run  # print what would be added, write nothing
-```
-
-- Entries are derived from the server's registered tools, so the list stays in
-  sync as tools change.
-- Idempotent: only missing entries are appended, as one contiguous block; a
-  re-run is a no-op.
-- Edits only the `allow` array; the rest of the file is left unchanged. Writes
-  are atomic (temp file + rename).
-- Target path is `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json`.
-- Takes effect in the next session (Claude reads permissions at startup).
-
-This grants the full surface, including `vim_command` and `vim_exec_lua`, which
-can run shell/Lua. Omit `setup` and approve tools per call if you don't want that.
+For pi, `setup` writes a `tool_result` extension that runs `open` on every file pi's
+edit and write tools change. `open` finds Neovim from pi's own environment:
+`NVIM_SOCKET_PATH`, then `$NVIM` when pi runs inside a Neovim terminal, then Neovim's
+default socket. A socket set only in the MCP server's `env` is not seen there.
 
 ## Configuration
 

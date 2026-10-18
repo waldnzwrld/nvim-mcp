@@ -31,7 +31,8 @@ type surfaceHookIn struct {
 // that have not been made yet, or "" when there is nothing to prompt. It fires
 // at most once per server process (i.e. once per session), appended to the
 // first tool result — the deterministic "on launch" surface for setup prompts.
-func firstRunBanner() string {
+// The auto-open hook item is only raised for Claude Code clients (claude).
+func firstRunBanner(claude bool) string {
 	if pkgCfg == nil || bannerShown.Load() {
 		return ""
 	}
@@ -39,7 +40,7 @@ func firstRunBanner() string {
 	if _, decided := pkgCfg.HighlightEdits(); !decided {
 		items = append(items, "- Edit-change highlighting is unconfigured — ask whether to highlight lines you edit, then set vim_edit_highlight.")
 	}
-	if _, decided := pkgCfg.SurfaceHook(); !decided && !config.SurfaceHookInstalled() {
+	if _, decided := pkgCfg.SurfaceHook(); claude && !decided && !config.SurfaceHookInstalled() {
 		items = append(items, "- Auto-open of edited files is not set up — ask the user: \"Would you like me to automatically open new and edited files in Neovim?\" (default: yes). On yes, call vim_surface_hook on (it returns the exact PostToolUse command to add) and install that hook via the update-config skill; on no, set vim_surface_hook off.")
 	}
 	if len(items) == 0 {
@@ -100,7 +101,7 @@ func registerSettings(s *mcp.Server, c *nvimc.Client, cfg *config.Store) {
 		})
 
 	addText(s, "vim_surface_hook",
-		"Record whether files Claude edits (via its Edit/Write tools) should be auto-opened into this Neovim session by the bundled 'nvim-mcp hook' PostToolUse hook. action: on | off | status. This persists the user's choice only; the hook itself lives in Claude's settings.json and is installed/removed by the agent (e.g. via the update-config skill). 'on' returns the exact command string to install. status reports both the recorded choice and whether the hook is currently present in settings.",
+		"Claude Code only (other clients: see `nvim-mcp open` in the README). Record whether files Claude edits (via its Edit/Write tools) should be auto-opened into this Neovim session by the bundled 'nvim-mcp hook' PostToolUse hook. action: on | off | status. This persists the user's choice only; the hook itself lives in Claude's settings.json and is installed/removed by the agent (e.g. via the update-config skill). 'on' returns the exact command string to install. status reports both the recorded choice and whether the hook is currently present in settings.",
 		func(_ context.Context, in surfaceHookIn) (string, error) {
 			switch in.Action {
 			case "on":

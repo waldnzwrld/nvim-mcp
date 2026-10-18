@@ -1,7 +1,8 @@
-// Package setup implements the `nvim-mcp setup` subcommand: it merges the
-// server's tool names into permissions.allow of Claude Code's settings.json so
-// the tools run without a per-call approval prompt. The merge is idempotent and
-// edits only the allow array, leaving the rest of the file byte-for-byte intact.
+// Package setup implements the `nvim-mcp setup` subcommand: it installs the
+// server into each selected harness (Claude Code, pi) — registering it, allowing
+// its tools where the harness asks per call, and wiring auto-open of edited
+// files. Every step is idempotent, and settings edits insert only the new bytes,
+// leaving the rest of the file intact.
 package setup
 
 import (
@@ -10,173 +11,267 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/waldnzwrld/nvim-mcp/internal/config"
 )
 
-// SettingsPath returns Claude Code's settings.json path, honoring
-// CLAUDE_CONFIG_DIR and falling back to ~/.claude.
+// SettingsPath returns Claude Code's settings.json path under config.ClaudeDir.
 func SettingsPath() (string, error) {
-	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
-		return filepath.Join(dir, "settings.json"), nil
-	}
-	home, err := os.UserHomeDir()
+	dir, err := config.ClaudeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".claude", "settings.json"), nil
+	return filepath.Join(dir, "settings.json"), nil
 }
 
 // MergeAllow ensures every entry in want is present in permissions.allow of the
-// settings file at path. Missing entries are appended as one contiguous block
-// at the head of the array; entries already present are left untouched. It
-// returns the entries it added (or would add, when dryRun is set). When the
-// file, its permissions object, or the allow array is absent, it falls back to
-// a structural write that creates them.
+// settings file at path. Missing entries are inserted as one contiguous block at
+// the head of the array; entries already present are left untouched. It returns
+// the entries it added (or would add, when dryRun is set).
 func MergeAllow(path string, want []string, dryRun bool) (added []string, err error) {
-	b, readErr := os.ReadFile(path)
-	if readErr != nil {
-		if !os.IsNotExist(readErr) {
-			return nil, readErr
-		}
-		b = nil
+	b, err := readSettings(path)
+	if err != nil {
+		return nil, err
 	}
-
+	var doc struct {
+		Permissions struct {
+			Allow []string `json:"allow"`
+		} `json:"permissions"`
+	}
+	if json.Unmarshal(b, &doc) != nil {
+		return nil, fmt.Errorf("%s: permissions.allow is not a string array", path)
+	}
 	have := map[string]bool{}
-	if len(b) > 0 {
-		var doc struct {
-			Permissions struct {
-				Allow []string `json:"allow"`
-			} `json:"permissions"`
-		}
-		if json.Unmarshal(b, &doc) != nil {
-			return nil, fmt.Errorf("%s is not valid JSON", path)
-		}
-		for _, e := range doc.Permissions.Allow {
-			have[e] = true
-		}
+	for _, e := range doc.Permissions.Allow {
+		have[e] = true
 	}
-
+	var elems []any
 	for _, e := range want {
 		if !have[e] {
 			added = append(added, e)
+			elems = append(elems, e)
 			have[e] = true // dedupe within want
 		}
 	}
 	if len(added) == 0 || dryRun {
 		return added, nil
 	}
-
-	openOff, closePos, ok := allowArrayBounds(b)
-	if !ok {
-		// No usable allow array — rebuild structurally (order not preserved,
-		// acceptable on a first-time / hand-absent file).
-		return added, structuralWrite(path, b, want)
+	out, err := prependArray(b, []string{"permissions", "allow"}, elems)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-
-	inner := b[openOff:closePos]
-	empty := len(bytes.TrimSpace(inner)) == 0
-
-	var out []byte
-	if empty {
-		indent, closeIndent := emptyIndents(b, openOff, closePos)
-		var block bytes.Buffer
-		for i, e := range added {
-			block.WriteString("\n")
-			block.WriteString(indent)
-			block.Write(quote(e))
-			if i < len(added)-1 {
-				block.WriteByte(',')
-			}
-		}
-		block.WriteString("\n")
-		block.WriteString(closeIndent)
-		out = concat(b[:openOff], block.Bytes(), b[closePos:])
-	} else {
-		indent := elementIndent(inner)
-		var block bytes.Buffer
-		for _, e := range added {
-			block.WriteString("\n")
-			block.WriteString(indent)
-			block.Write(quote(e))
-			block.WriteByte(',')
-		}
-		// Prepend the block right after '['; the existing first element (which
-		// already carries its own newline+indent) follows, so commas stay valid.
-		out = concat(b[:openOff], block.Bytes(), b[openOff:])
-	}
-
 	return added, atomicWrite(path, out)
 }
 
-// allowArrayBounds scans the JSON and returns the byte offset just past the
-// '[' that opens permissions.allow and the offset of its matching ']'. It keys
-// off the object key "allow" followed by an array; a string *value* "allow" is
-// never followed by '[' in valid JSON, so the simple key tracking is safe.
-func allowArrayBounds(b []byte) (openOff, closePos int, ok bool) {
+// hookEntry is one PostToolUse matcher group; a struct keeps the key order
+// Claude's docs use.
+type hookEntry struct {
+	Matcher string        `json:"matcher"`
+	Hooks   []hookCommand `json:"hooks"`
+}
+
+type hookCommand struct {
+	Type    string `json:"type"`
+	Command string `json:"command"`
+}
+
+// InstallHook adds a PostToolUse hook running command after Edit, Write and
+// MultiEdit to the settings file at path, at the head of hooks.PostToolUse.
+// The caller checks whether the hook is already installed.
+func InstallHook(path, command string, dryRun bool) error {
+	b, err := readSettings(path)
+	if err != nil || dryRun {
+		return err
+	}
+	entry := hookEntry{Matcher: "Edit|Write|MultiEdit", Hooks: []hookCommand{{Type: "command", Command: command}}}
+	out, err := prependArray(b, []string{"hooks", "PostToolUse"}, []any{entry})
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	return atomicWrite(path, out)
+}
+
+// readSettings returns the settings file's bytes, "{}" when it is missing or
+// empty, or an error when it is not a JSON object.
+func readSettings(path string) ([]byte, error) {
+	b, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	if len(bytes.TrimSpace(b)) == 0 {
+		return []byte("{}\n"), nil
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(b, &obj) != nil {
+		return nil, fmt.Errorf("%s is not a JSON object", path)
+	}
+	return b, nil
+}
+
+// prependArray inserts elems at the head of the array reached from the root
+// object by the keys in path, creating whichever trailing objects and the array
+// are missing. Only the inserted bytes change; the rest of b is preserved.
+func prependArray(b []byte, path []string, elems []any) ([]byte, error) {
+	depth, err := existingDepth(b, path)
+	if err != nil {
+		return nil, err
+	}
+	delim := byte('{')
+	if depth == len(path) {
+		delim = '['
+	}
+	open, close, ok := containerBounds(b, path[:depth], delim)
+	if !ok {
+		return nil, fmt.Errorf("cannot locate %v", path[:depth])
+	}
+	inner := b[open:close]
+	empty := len(bytes.TrimSpace(inner)) == 0
+	closeIndent := lineIndent(b, close)
+	indent := closeIndent + "  "
+	if !empty {
+		lead := inner[:len(inner)-len(bytes.TrimLeft(inner, " \t\r\n"))]
+		if i := bytes.LastIndexByte(lead, '\n'); i >= 0 {
+			indent = string(lead[i+1:])
+		}
+	}
+
+	var parts [][]byte
+	if depth == len(path) {
+		for _, e := range elems {
+			parts = append(parts, render(e, indent))
+		}
+	} else {
+		var v any = elems
+		for i := len(path) - 1; i > depth; i-- {
+			v = map[string]any{path[i]: v}
+		}
+		parts = append(parts, concat(render(path[depth], indent), []byte(": "), render(v, indent)))
+	}
+
+	var block bytes.Buffer
+	for i, p := range parts {
+		block.WriteString("\n" + indent)
+		block.Write(p)
+		if !empty || i < len(parts)-1 {
+			block.WriteByte(',')
+		}
+	}
+	if empty {
+		block.WriteString("\n" + closeIndent)
+		return concat(b[:open], block.Bytes(), b[close:]), nil
+	}
+	return concat(b[:open], block.Bytes(), b[open:]), nil
+}
+
+// existingDepth reports how many leading keys of path already exist as objects
+// (or, for the last key, as the target array), erroring when one exists with a
+// different JSON type.
+func existingDepth(b []byte, path []string) (int, error) {
+	var node any
+	if err := json.Unmarshal(b, &node); err != nil {
+		return 0, err
+	}
+	for i, key := range path {
+		obj, ok := node.(map[string]any)
+		if !ok {
+			return 0, fmt.Errorf("%v is not an object", path[:i])
+		}
+		child, exists := obj[key]
+		if !exists {
+			return i, nil
+		}
+		if i == len(path)-1 {
+			if _, ok := child.([]any); !ok {
+				return 0, fmt.Errorf("%v is not an array", path)
+			}
+		}
+		node = child
+	}
+	return len(path), nil
+}
+
+// containerBounds walks b's tokens and returns the offset just past the delim
+// that opens the container at path (object keys from the root) and the offset
+// of its matching close.
+func containerBounds(b []byte, path []string, delim byte) (open, close int, ok bool) {
+	type frame struct {
+		obj, wantKey bool
+		key          string
+	}
+	var stack []frame
+	valueDone := func() {
+		if n := len(stack); n > 0 && stack[n-1].obj {
+			stack[n-1].wantKey = true
+		}
+	}
+	atPath := func() bool {
+		if len(stack) != len(path) {
+			return false
+		}
+		for i, f := range stack {
+			if !f.obj || f.key != path[i] {
+				return false
+			}
+		}
+		return true
+	}
 	dec := json.NewDecoder(bytes.NewReader(b))
-	var lastKey string
 	for {
 		tok, err := dec.Token()
 		if err != nil {
 			return 0, 0, false
 		}
 		switch t := tok.(type) {
-		case string:
-			lastKey = t
 		case json.Delim:
-			if t == '[' && lastKey == "allow" {
-				open := int(dec.InputOffset())
-				depth := 1
-				for depth > 0 {
-					tk, err := dec.Token()
-					if err != nil {
-						return 0, 0, false
-					}
-					if d, ok := tk.(json.Delim); ok {
-						switch d {
-						case '[', '{':
-							depth++
-						case ']', '}':
-							depth--
+			if t == '{' || t == '[' {
+				if byte(t) == delim && atPath() {
+					open = int(dec.InputOffset())
+					for depth := 1; depth > 0; {
+						tk, err := dec.Token()
+						if err != nil {
+							return 0, 0, false
+						}
+						if d, isDelim := tk.(json.Delim); isDelim {
+							if d == '{' || d == '[' {
+								depth++
+							} else {
+								depth--
+							}
 						}
 					}
+					return open, int(dec.InputOffset()) - 1, true
 				}
-				return open, int(dec.InputOffset()) - 1, true
+				stack = append(stack, frame{obj: t == '{', wantKey: t == '{'})
+				continue
 			}
-			lastKey = ""
+			stack = stack[:len(stack)-1]
+			valueDone()
+		case string:
+			if n := len(stack); n > 0 && stack[n-1].obj && stack[n-1].wantKey {
+				stack[n-1].key, stack[n-1].wantKey = t, false
+				continue
+			}
+			valueDone()
+		default:
+			valueDone()
 		}
 	}
 }
 
-// elementIndent reads the leading whitespace of the first array element from
-// the bytes between '[' and ']', defaulting to six spaces.
-func elementIndent(inner []byte) string {
-	if i := bytes.IndexByte(inner, '\n'); i >= 0 {
-		j := i + 1
-		k := j
-		for k < len(inner) && (inner[k] == ' ' || inner[k] == '\t') {
-			k++
-		}
-		return string(inner[j:k])
+// lineIndent returns the whitespace before pos on its line, or "" when other
+// text precedes pos there.
+func lineIndent(b []byte, pos int) string {
+	seg := b[bytes.LastIndexByte(b[:pos], '\n')+1 : pos]
+	if len(bytes.TrimLeft(seg, " \t")) == 0 {
+		return string(seg)
 	}
-	return "      "
+	return ""
 }
 
-// emptyIndents derives element and closing-bracket indentation for an empty
-// array from the line the ']' sits on.
-func emptyIndents(b []byte, openOff, closePos int) (indent, closeIndent string) {
-	closeIndent = "    "
-	if ls := bytes.LastIndexByte(b[:closePos], '\n'); ls >= 0 {
-		seg := b[ls+1 : closePos]
-		if len(bytes.TrimLeft(seg, " \t")) == 0 {
-			closeIndent = string(seg)
-		}
-	}
-	return closeIndent + "  ", closeIndent
-}
-
-func quote(s string) []byte {
-	q, _ := json.Marshal(s)
-	return q
+// render marshals v with two-space nesting, continuation lines prefixed by indent.
+func render(v any, indent string) []byte {
+	out, _ := json.MarshalIndent(v, indent, "  ")
+	return out
 }
 
 func concat(parts ...[]byte) []byte {
@@ -185,33 +280,6 @@ func concat(parts ...[]byte) []byte {
 		out = append(out, p...)
 	}
 	return out
-}
-
-// structuralWrite unmarshals the whole document, injects the allow entries, and
-// re-marshals. Used only when no allow array can be located; object-key order
-// is not preserved by encoding/json.
-func structuralWrite(path string, b []byte, want []string) error {
-	doc := map[string]any{}
-	if len(b) > 0 {
-		if json.Unmarshal(b, &doc) != nil {
-			return fmt.Errorf("%s is not valid JSON", path)
-		}
-	}
-	perms, _ := doc["permissions"].(map[string]any)
-	if perms == nil {
-		perms = map[string]any{}
-		doc["permissions"] = perms
-	}
-	var allow []any
-	for _, e := range want {
-		allow = append(allow, e)
-	}
-	perms["allow"] = allow
-	out, err := json.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		return err
-	}
-	return atomicWrite(path, append(out, '\n'))
 }
 
 func atomicWrite(path string, data []byte) error {

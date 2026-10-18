@@ -6,6 +6,7 @@ package tools
 
 import (
 	"context"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -57,18 +58,26 @@ func ToolNames() []string {
 func addText[In any](s *mcp.Server, name, desc string, fn func(context.Context, In) (string, error)) {
 	registeredNames = append(registeredNames, name)
 	mcp.AddTool(s, &mcp.Tool{Name: name, Description: desc},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
+		func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 			out, err := fn(ctx, in)
 			if err != nil {
 				return nil, nil, err
 			}
 			// Append the one-time first-run setup prompt (empty after it has
 			// fired once, or when nothing is left to configure).
-			out += firstRunBanner()
+			claude := req != nil && req.Session != nil && ClaudeCode(req.Session.InitializeParams())
+			out += firstRunBanner(claude)
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: out}},
 			}, nil, nil
 		})
+}
+
+// ClaudeCode reports whether the session's client is Claude Code, the only
+// client that can carry the `nvim-mcp hook` PostToolUse hook in its
+// settings.json. Other clients (e.g. pi) get no hook-setup prompts.
+func ClaudeCode(p *mcp.InitializeParams) bool {
+	return p != nil && p.ClientInfo != nil && strings.Contains(strings.ToLower(p.ClientInfo.Name), "claude")
 }
 
 // optInt converts an optional pointer argument into the value/nil form that
