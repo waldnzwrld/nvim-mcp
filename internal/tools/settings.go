@@ -100,7 +100,7 @@ func registerSettings(s *mcp.Server, c *nvimc.Client, cfg *config.Store) {
 		})
 
 	addText(s, "vim_surface_hook",
-		"Record whether files the agent edits (via its Edit/Write tools) should be auto-opened into this Neovim session by the bundled 'nvim-mcp hook' PostToolUse hook. action: on | off | status. This persists the user's choice only; the hook itself lives in the agent's settings.json and is installed/removed by the agent (e.g. via the update-config skill). 'on' returns the exact command string to install. status reports both the recorded choice and whether the hook is currently present in settings.",
+		"Record whether files Claude edits (via its Edit/Write tools) should be auto-opened into this Neovim session by the bundled 'nvim-mcp hook' PostToolUse hook. action: on | off | status. This persists the user's choice only; the hook itself lives in Claude's settings.json and is installed/removed by the agent (e.g. via the update-config skill). 'on' returns the exact command string to install. status reports both the recorded choice and whether the hook is currently present in settings.",
 		func(_ context.Context, in surfaceHookIn) (string, error) {
 			switch in.Action {
 			case "on":

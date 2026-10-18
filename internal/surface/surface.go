@@ -1,6 +1,6 @@
-// Package surface implements the `nvim-mcp hook` subcommand: a PostToolUse hook
-// that opens files the agent edits into the live Neovim session, so the human
-// sees the agent's work in their editor.
+// Package surface implements the `nvim-mcp hook` subcommand: a Claude Code
+// PostToolUse hook that opens files Claude edits into the live Neovim session,
+// so the human sees the agent's work in their editor.
 //
 // It is bundled into the binary itself (rather than shipped as a separate shell
 // script) so a `go install`-ed nvim-mcp is fully self-contained: the same
@@ -10,9 +10,9 @@
 //
 // Scoping: a file is surfaced if it is a real file on disk AND does not live in
 // a temporary/scratch location. Files anywhere else are surfaced, including
-// outside the current project. Excluded are the OS temp dirs (where agent
-// scratchpads live) and the machine-managed session subtrees under ~/.claude
-// (Claude Code) or ~/.pi/agent (Pi). The rest of ~/.claude and ~/.pi/agent —
+// outside the current project. Excluded are the OS temp dirs (where Claude's
+// scratchpad lives) and the machine-managed session subtrees under ~/.claude
+// (plans, transcripts, shell snapshots, …). The rest of ~/.claude —
 // settings.json, CLAUDE.md, agents/, skills/, memory/, hooks/, … — is
 // user-authored config the human edits and wants reloaded, so it is NOT
 // excluded. Anything skipped can still be opened deliberately with vim_file_open.
@@ -86,7 +86,7 @@ func Run(r io.Reader, socketFlag string) {
 }
 
 // claudeTransientDirs are the machine-managed subdirectories of ~/.claude that
-// hold session/transcript/scratch state Claude Code writes as it runs. They are
+// hold session/transcript/scratch state Claude writes as it runs. They are
 // skipped so those never flood the buffer list — unlike the user's own config
 // and content in ~/.claude (settings.json, CLAUDE.md, agents/, skills/,
 // memory/, hooks/, statusline-command.sh, …), which is surfaced normally.
@@ -96,19 +96,10 @@ var claudeTransientDirs = []string{
 	"file-history", "backups", "debug", "downloads", "daemon", "logs", "statsig",
 }
 
-// piTransientDirs are the machine-managed subdirectories of ~/.pi/agent that
-// hold session/transcript/scratch state Pi writes as it runs. They are skipped
-// so those never flood the buffer list — unlike the user's own config and
-// content (settings.json, SYSTEM.md, agents/, skills/, memory/, hooks/, …),
-// which is surfaced normally.
-var piTransientDirs = []string{
-	"plans", "sessions", "transcripts", "cache", "logs", "tmp", "backups",
-}
-
 // excluded reports whether abs lives in a temporary/scratch location that should
 // not be auto-opened: any OS temp dir ($TMPDIR / /tmp / /private/tmp /
-// /var/folders — where agent scratchpads live) or one of the transient session
-// subtrees under ~/.claude (Claude Code) or ~/.pi/agent (Pi). abs is expected
+// /var/folders — where Claude's scratchpad lives) or one of the transient
+// session subtrees under ~/.claude (see claudeTransientDirs). abs is expected
 // already symlink-resolved; each excluded root is resolved the same way so the
 // comparison holds despite the macOS /tmp → /private/tmp and /var → /private/var
 // symlinks.
@@ -117,26 +108,11 @@ func excluded(abs string) bool {
 	if t := os.TempDir(); t != "" {
 		roots = append(roots, t)
 	}
-	home, _ := os.UserHomeDir()
-
-	// Claude Code transient dirs.
-	if home != "" {
+	if home, err := os.UserHomeDir(); err == nil {
 		for _, sub := range claudeTransientDirs {
 			roots = append(roots, filepath.Join(home, ".claude", sub))
 		}
 	}
-
-	// Pi transient dirs (respect $PI_AGENT_DIR override).
-	if piDir := os.Getenv("PI_AGENT_DIR"); piDir != "" {
-		for _, sub := range piTransientDirs {
-			roots = append(roots, filepath.Join(piDir, sub))
-		}
-	} else if home != "" {
-		for _, sub := range piTransientDirs {
-			roots = append(roots, filepath.Join(home, ".pi", "agent", sub))
-		}
-	}
-
 	for _, r := range roots {
 		if resolved, err := filepath.EvalSymlinks(r); err == nil {
 			r = resolved
