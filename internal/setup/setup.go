@@ -1,7 +1,12 @@
 // Package setup implements the `nvim-mcp setup` subcommand: it merges the
-// server's tool names into permissions.allow of Claude Code's settings.json so
+// server's tool names into permissions.allow of the agent's settings.json so
 // the tools run without a per-call approval prompt. The merge is idempotent and
 // edits only the allow array, leaving the rest of the file byte-for-byte intact.
+//
+// Supported agents:
+//
+//  1. Claude Code — writes to ~/.claude/settings.json or $CLAUDE_CONFIG_DIR/settings.json
+//  2. Pi          — writes to ~/.pi/agent/settings.json or $PI_AGENT_DIR/settings.json
 package setup
 
 import (
@@ -12,15 +17,32 @@ import (
 	"path/filepath"
 )
 
-// SettingsPath returns Claude Code's settings.json path, honoring
-// CLAUDE_CONFIG_DIR and falling back to ~/.claude.
+// SettingsPath returns the agent settings.json path. It detects the active
+// agent via environment variables and falls back to Claude Code (for backward
+// compatibility).
+//
+// Priority:
+//
+//  1. $PI_AGENT_DIR/settings.json           (Pi, explicit)
+//  2. $CLAUDE_CONFIG_DIR/settings.json      (Claude, explicit)
+//  3. ~/.pi/agent/settings.json             (Pi, default)
+//  4. ~/.claude/settings.json               (Claude, default / fallback)
 func SettingsPath() (string, error) {
+	// Pi always takes priority when explicitly requested.
+	if dir := os.Getenv("PI_AGENT_DIR"); dir != "" {
+		return filepath.Join(dir, "settings.json"), nil
+	}
+	// Claude Code explicit config dir.
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
 		return filepath.Join(dir, "settings.json"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
+	}
+	// Default to Pi if its directory exists; otherwise fall back to Claude.
+	if _, err := os.Stat(filepath.Join(home, ".pi", "agent")); err == nil {
+		return filepath.Join(home, ".pi", "agent", "settings.json"), nil
 	}
 	return filepath.Join(home, ".claude", "settings.json"), nil
 }
