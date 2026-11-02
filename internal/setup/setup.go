@@ -1,5 +1,5 @@
 // Package setup implements the `nvim-mcp setup` subcommand: it installs the
-// server into each selected harness (Claude Code, pi) — registering it, allowing
+// server into each selected harness (Claude Code, pi, omp) — registering it, allowing
 // its tools where the harness asks per call, and wiring auto-open of edited
 // files. Every step is idempotent, and settings edits insert only the new bytes,
 // leaving the rest of the file intact.
@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/waldnzwrld/nvim-mcp/internal/config"
 )
@@ -112,22 +113,65 @@ func readSettings(path string) ([]byte, error) {
 // object by the keys in path, creating whichever trailing objects and the array
 // are missing. Only the inserted bytes change; the rest of b is preserved.
 func prependArray(b []byte, path []string, elems []any) ([]byte, error) {
-	depth, err := existingDepth(b, path)
+	depth, err := existingDepth(b, path, true)
 	if err != nil {
 		return nil, err
 	}
-	delim := byte('{')
 	if depth == len(path) {
-		delim = '['
+		return prependMembers(b, path, '[', func(indent string) [][]byte {
+			parts := make([][]byte, len(elems))
+			for i, e := range elems {
+				parts[i] = render(e, indent)
+			}
+			return parts
+		})
 	}
-	open, close, ok := containerBounds(b, path[:depth], delim)
+	return prependMembers(b, path[:depth], '{', member(path[depth], nest(path[depth+1:], elems)))
+}
+
+// prependKey inserts "key": val at the head of the object reached from the root
+// object by the keys in path, creating whichever objects are missing. The
+// caller checks that key is absent. Only the inserted bytes change.
+func prependKey(b []byte, path []string, key string, val any) ([]byte, error) {
+	depth, err := existingDepth(b, path, false)
+	if err != nil {
+		return nil, err
+	}
+	if depth == len(path) {
+		return prependMembers(b, path, '{', member(key, val))
+	}
+	return prependMembers(b, path[:depth], '{', member(path[depth], nest(append(path[depth+1:len(path):len(path)], key), val)))
+}
+
+// member renders one `"key": value` object member at a given indent.
+func member(key string, val any) func(string) [][]byte {
+	return func(indent string) [][]byte {
+		return [][]byte{concat(render(key, indent), []byte(": "), render(val, indent))}
+	}
+}
+
+// nest wraps v in one single-key object per key, outermost first.
+func nest(keys []string, v any) any {
+	for i := len(keys) - 1; i >= 0; i-- {
+		v = map[string]any{keys[i]: v}
+	}
+	return v
+}
+
+// prependMembers inserts the entries built by parts at the head of the
+// container (opened by delim) at path, matching the indentation already in use.
+func prependMembers(b []byte, path []string, delim byte, parts func(indent string) [][]byte) ([]byte, error) {
+	open, close, ok := containerBounds(b, path, delim)
 	if !ok {
-		return nil, fmt.Errorf("cannot locate %v", path[:depth])
+		return nil, fmt.Errorf("cannot locate %v", path)
 	}
 	inner := b[open:close]
 	empty := len(bytes.TrimSpace(inner)) == 0
 	closeIndent := lineIndent(b, close)
 	indent := closeIndent + "  "
+	if strings.HasPrefix(closeIndent, "\t") {
+		indent = closeIndent + "\t"
+	}
 	if !empty {
 		lead := inner[:len(inner)-len(bytes.TrimLeft(inner, " \t\r\n"))]
 		if i := bytes.LastIndexByte(lead, '\n'); i >= 0 {
@@ -135,24 +179,12 @@ func prependArray(b []byte, path []string, elems []any) ([]byte, error) {
 		}
 	}
 
-	var parts [][]byte
-	if depth == len(path) {
-		for _, e := range elems {
-			parts = append(parts, render(e, indent))
-		}
-	} else {
-		var v any = elems
-		for i := len(path) - 1; i > depth; i-- {
-			v = map[string]any{path[i]: v}
-		}
-		parts = append(parts, concat(render(path[depth], indent), []byte(": "), render(v, indent)))
-	}
-
+	ps := parts(indent)
 	var block bytes.Buffer
-	for i, p := range parts {
+	for i, p := range ps {
 		block.WriteString("\n" + indent)
 		block.Write(p)
-		if !empty || i < len(parts)-1 {
+		if !empty || i < len(ps)-1 {
 			block.WriteByte(',')
 		}
 	}
@@ -164,9 +196,9 @@ func prependArray(b []byte, path []string, elems []any) ([]byte, error) {
 }
 
 // existingDepth reports how many leading keys of path already exist as objects
-// (or, for the last key, as the target array), erroring when one exists with a
-// different JSON type.
-func existingDepth(b []byte, path []string) (int, error) {
+// (or, for the last key when leafArray is set, as an array), erroring when one
+// exists with a different JSON type.
+func existingDepth(b []byte, path []string, leafArray bool) (int, error) {
 	var node any
 	if err := json.Unmarshal(b, &node); err != nil {
 		return 0, err
@@ -180,12 +212,14 @@ func existingDepth(b []byte, path []string) (int, error) {
 		if !exists {
 			return i, nil
 		}
-		if i == len(path)-1 {
-			if _, ok := child.([]any); !ok {
-				return 0, fmt.Errorf("%v is not an array", path)
-			}
-		}
 		node = child
+	}
+	if leafArray {
+		if _, ok := node.([]any); !ok {
+			return 0, fmt.Errorf("%v is not an array", path)
+		}
+	} else if _, ok := node.(map[string]any); !ok {
+		return 0, fmt.Errorf("%v is not an object", path)
 	}
 	return len(path), nil
 }
@@ -268,9 +302,14 @@ func lineIndent(b []byte, pos int) string {
 	return ""
 }
 
-// render marshals v with two-space nesting, continuation lines prefixed by indent.
+// render marshals v with nested lines prefixed by indent, nesting by a tab when
+// indent is tab-based and by two spaces otherwise.
 func render(v any, indent string) []byte {
-	out, _ := json.MarshalIndent(v, indent, "  ")
+	unit := "  "
+	if strings.HasPrefix(indent, "\t") {
+		unit = "\t"
+	}
+	out, _ := json.MarshalIndent(v, indent, unit)
 	return out
 }
 

@@ -160,7 +160,7 @@ func runSetup(args []string) {
 	var dryRun bool
 	fs.BoolVar(&dryRun, "dry-run", false, "report what would change, write nothing")
 	fs.BoolVar(&dryRun, "n", false, "shorthand for --dry-run")
-	only := fs.String("harness", "", "comma-separated harnesses to install into (claude, pi); skips the prompt")
+	only := fs.String("harness", "", "comma-separated harnesses to install into (claude, pi, omp); skips the prompt")
 	_ = fs.Parse(args)
 
 	all := setup.Harnesses()
@@ -176,10 +176,7 @@ func runSetup(args []string) {
 
 	cfg := config.Load()
 	on, decided := cfg.SurfaceHook()
-	opts := setup.Options{Exe: config.Executable(), AutoOpen: on || !decided, DryRun: dryRun}
-	for _, name := range tools.ToolNames() {
-		opts.Allow = append(opts.Allow, "mcp__"+setup.ServerName+"__"+name)
-	}
+	opts := setup.Options{Exe: config.Executable(), Tools: tools.ToolNames(), AutoOpen: on || !decided, DryRun: dryRun}
 
 	failed := false
 	for _, h := range selected {

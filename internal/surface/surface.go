@@ -12,8 +12,8 @@
 // a temporary/scratch location. Files anywhere else are surfaced, including
 // outside the current project. Excluded are the OS temp dirs (where Claude's
 // scratchpad lives), the machine-managed session subtrees under ~/.claude
-// (plans, transcripts, shell snapshots, …), and pi's sessions directory. The
-// rest of ~/.claude —
+// (plans, transcripts, shell snapshots, …), pi's sessions directory, and omp's
+// session/artifact directories. The rest of ~/.claude —
 // settings.json, CLAUDE.md, agents/, skills/, memory/, hooks/, … — is
 // user-authored config the human edits and wants reloaded, so it is NOT
 // excluded. Anything skipped can still be opened deliberately with vim_file_open.
@@ -112,11 +112,16 @@ var claudeTransientDirs = []string{
 	"file-history", "backups", "debug", "downloads", "daemon", "logs", "statsig",
 }
 
+// ompTransientDirs are the subdirectories of omp's agent directory holding
+// session transcripts, artifacts (local://, artifact://) and caches.
+var ompTransientDirs = []string{"sessions", "terminal-sessions", "blobs", "cache"}
+
 // excluded reports whether abs lives in a temporary/scratch location that should
 // not be auto-opened: any OS temp dir ($TMPDIR / /tmp / /private/tmp /
 // /var/folders — where Claude's scratchpad lives), one of the transient session
-// subtrees under config.ClaudeDir (see claudeTransientDirs), or pi's default
-// session directory under config.PiDir. abs is expected
+// subtrees under config.ClaudeDir (see claudeTransientDirs), pi's default
+// session directory under config.PiDir, or omp's under config.OmpDir (see
+// ompTransientDirs). abs is expected
 // already symlink-resolved; each excluded root is resolved the same way so the
 // comparison holds despite the macOS /tmp → /private/tmp and /var → /private/var
 // symlinks.
@@ -132,6 +137,11 @@ func excluded(abs string) bool {
 	}
 	if dir, err := config.PiDir(); err == nil {
 		roots = append(roots, filepath.Join(dir, "sessions"))
+	}
+	if dir, err := config.OmpDir(); err == nil {
+		for _, sub := range ompTransientDirs {
+			roots = append(roots, filepath.Join(dir, sub))
+		}
 	}
 	for _, r := range roots {
 		if resolved, err := filepath.EvalSymlinks(r); err == nil {
