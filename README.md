@@ -51,25 +51,29 @@ One command installs nvim-mcp into the harnesses you use:
 
 ```sh
 nvim-mcp setup                       # detect harnesses, pick which to install into
-nvim-mcp setup --harness claude,pi   # skip the prompt
+nvim-mcp setup --harness claude,pi,omp   # skip the prompt
 nvim-mcp setup --dry-run             # print what would change, write nothing
 ```
 
-Supported harnesses are Claude Code (`claude`) and [pi](https://pi.dev) (`pi`). A harness is
+Supported harnesses are Claude Code (`claude`), [pi](https://pi.dev) (`pi`) and
+[omp](https://github.com/can1357/oh-my-pi) (`omp`). A harness is
 detected when its CLI is on `PATH` or its config directory exists. On a terminal, `setup`
 lists them and asks which to install into (Enter = every detected one); without a terminal
 it installs into every detected harness.
 
-| Step | Claude Code | pi |
-|---|---|---|
-| Register the server as `nvim` | `claude mcp add --scope user nvim -- <abs path>` | `pi mcp add nvim -- <abs path>` |
-| Allow the tools | adds every `mcp__nvim__*` tool to `permissions.allow` in `settings.json` | nothing to do: pi does not ask per tool call |
-| Auto-open edited files | adds the `nvim-mcp hook` `PostToolUse` hook to `settings.json` | writes `extensions/nvim-mcp.ts` |
+| Step | Claude Code | pi | omp |
+|---|---|---|---|
+| Register the server as `nvim` | `claude mcp add --scope user nvim -- <abs path>` | `pi mcp add nvim -- <abs path>` | adds a stdio `nvim` entry to `mcpServers` in `mcp.json` |
+| Allow the tools | adds every `mcp__nvim__*` tool to `permissions.allow` in `settings.json` | nothing to do: pi does not ask per tool call | sets every `mcp__nvim_*` tool to `allow` under `tools.approval` (via `omp config set`) |
+| Auto-open edited files | adds the `nvim-mcp hook` `PostToolUse` hook to `settings.json` | writes `extensions/nvim-mcp.ts` | writes `extensions/nvim-mcp.ts` |
 
 - Config locations: `$CLAUDE_CONFIG_DIR`, else `~/.claude`; `$PI_CODING_AGENT_DIR`, else
-  `~/.pi/agent`.
+  `~/.pi/agent`; omp's active agent directory: `~/.omp/profiles/<name>/agent` under a named
+  profile (`OMP_PROFILE`, else `PI_PROFILE`), else `$PI_CODING_AGENT_DIR`, else
+  `~/.omp/agent` (`PI_CONFIG_DIR` replaces `.omp`).
 - Idempotent: a step that is already done is skipped, so re-running is safe. Registration is
-  skipped when a server named `nvim` already exists.
+  skipped when a server named `nvim` already exists. omp `tools.approval` entries you have
+  already set for a tool (`allow`, `prompt` or `deny`) are kept.
 - Settings edits insert only the new entries; the rest of the file is left unchanged. Writes
   are atomic (temp file + rename).
 - The registered path, hook and extension all use the absolute path of the binary that ran
@@ -84,7 +88,8 @@ which can run shell/Lua. To approve tools per call instead, register by hand
 (`claude mcp add --scope user nvim -- "$(go env GOPATH)/bin/nvim-mcp"`) and skip `setup`.
 
 Manage the Claude registration with `claude mcp list`, `claude mcp get nvim`,
-`claude mcp remove nvim`, or `/mcp` inside a chat; pi's with `pi mcp list` / `/mcp`.
+`claude mcp remove nvim`, or `/mcp` inside a chat; pi's with `pi mcp list` / `/mcp`; omp's
+with `/mcp list`, `/mcp test nvim` or `/mcp disable nvim` inside a chat.
 
 A project-local [`.mcp.json`](.mcp.json) is available in this repo if you would like to confine this mcp to specific projects.
 
@@ -125,8 +130,11 @@ only, temp/session paths skipped, relative paths resolved against the cwd) and
 always exits 0.
 
 For pi, `setup` writes a `tool_result` extension that runs `open` on every file pi's
-edit and write tools change. `open` finds Neovim from pi's own environment:
-`NVIM_SOCKET_PATH`, then `$NVIM` when pi runs inside a Neovim terminal, then Neovim's
+edit and write tools change. For omp, the extension does the same for `write`, `edit`
+(including multi-file edits) and `ast_edit` once its change is applied, also when those
+tools are called through `xd://` devices. `open` finds Neovim from the harness's own
+environment:
+`NVIM_SOCKET_PATH`, then `$NVIM` when the harness runs inside a Neovim terminal, then Neovim's
 default socket. A socket set only in the MCP server's `env` is not seen there.
 
 ## Configuration
